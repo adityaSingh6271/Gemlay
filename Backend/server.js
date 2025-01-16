@@ -7,6 +7,7 @@ import { Strategy as GitHubStrategy } from "passport-github2";
 import session from "express-session";
 import cors from "cors";
 import dotenv from "dotenv";
+import sharedSession from "express-socket.io-session";
 
 // Load environment variables
 dotenv.config();
@@ -19,26 +20,27 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true,
   },
-  // Add Socket.IO specific configurations
-  pingTimeout: 60000,
-  pingInterval: 25000,
-  transports: ["websocket", "polling"], // Enable WebSocket with polling fallback
-  reconnection: true,
-  reconnectionAttempts: 5,
-  reconnectionDelay: 1000,
+});
+
+// Session configuration
+const sessionMiddleware = session({
+  secret: process.env.SESSION_SECRET || "your_fallback_secret",
+  resave: false,
+  saveUninitialized: false,
 });
 
 app.use(cors({ origin: "http://localhost:3000", credentials: true }));
 app.use(express.json());
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "your_fallback_secret",
-    resave: false,
-    saveUninitialized: false,
-  })
-);
+app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Attach session to Socket.IO
+io.use(
+  sharedSession(sessionMiddleware, {
+    autoSave: true,
+  })
+);
 
 // Passport configuration
 passport.serializeUser((user, done) => {
@@ -58,7 +60,6 @@ passport.use(
       callbackURL: "http://localhost:5000/auth/google/callback",
     },
     (accessToken, refreshToken, profile, done) => {
-      // Here you would typically save the user to your database
       return done(null, profile);
     }
   )
@@ -73,7 +74,6 @@ passport.use(
       callbackURL: "http://localhost:5000/auth/github/callback",
     },
     (accessToken, refreshToken, profile, done) => {
-      // Here you would typically save the user to your database
       return done(null, profile);
     }
   )
@@ -84,6 +84,7 @@ app.get(
   "/auth/google",
   passport.authenticate("google", { scope: ["profile", "email"] })
 );
+
 app.get(
   "/auth/google/callback",
   passport.authenticate("google", { failureRedirect: "/login" }),
@@ -94,6 +95,7 @@ app.get(
   "/auth/github",
   passport.authenticate("github", { scope: ["user:email"] })
 );
+
 app.get(
   "/auth/github/callback",
   passport.authenticate("github", { failureRedirect: "/login" }),
@@ -115,110 +117,58 @@ app.get("/api/products", (req, res) => {
   res.json(products);
 });
 
-// Socket.io
+// Socket.IO events
 io.on("connection", (socket) => {
-  console.log("A user connected with ID:", socket.id);
+  const user = socket.handshake.session?.passport?.user;
 
-  // Attach user data to socket if authenticated
-  if (socket.request.session?.passport?.user) {
-    socket.user = socket.request.session.passport.user;
+  if (user) {
+    socket.user = user;
     console.log(
-      `Authenticated user connected: ${
-        socket.user.displayName || socket.user.username
-      }`
+      `Authenticated user connected: ${user.displayName || user.username}`
     );
+  } else {
+    console.log("Unauthenticated user connected.");
   }
 
-  // Handle cart operations
-  socket.on("addToCart", async (productId, callback) => {
-    try {
-      // Verify user is authenticated
-      if (!socket.user) {
-        throw new Error("User not authenticated");
-      }
-
-      // Here you would typically update the user's cart in the database
-      console.log(
-        `Adding product ${productId} to cart for user ${socket.user.id}`
+  socket.on("addToCart", (productId, callback) => {
+    if (!socket.user) {
+      return (
+        callback &&
+        callback({ success: false, error: "User not authenticated" })
       );
-
-      // Emit to all user's connected clients
-      socket.emit("cartUpdated", {
-        productId,
-        action: "added",
-        timestamp: new Date().toISOString(),
-      });
-
-      // Acknowledge successful operation
-      if (callback) {
-        callback({
-          success: true,
-          message: "Product added to cart successfully",
-        });
-      }
-    } catch (error) {
-      console.error("Error adding to cart:", error);
-      if (callback) {
-        callback({
-          success: false,
-          error: error.message,
-        });
-      }
     }
+
+    console.log(
+      `Adding product ${productId} to cart for user ${socket.user.id}`
+    );
+    callback && callback({ success: true, message: "Added to cart!" });
+
+    socket.emit("cartUpdated", productId);
   });
 
-  // Handle wishlist operations
-  socket.on("addToWishlist", async (productId, callback) => {
-    try {
-      // Verify user is authenticated
-      if (!socket.user) {
-        throw new Error("User not authenticated");
-      }
-
-      // Here you would typically update the user's wishlist in the database
-      console.log(
-        `Adding product ${productId} to wishlist for user ${socket.user.id}`
+  socket.on("addToWishlist", (productId, callback) => {
+    if (!socket.user) {
+      return (
+        callback &&
+        callback({ success: false, error: "User not authenticated" })
       );
-
-      // Emit to all user's connected clients
-      socket.emit("wishlistUpdated", {
-        productId,
-        action: "added",
-        timestamp: new Date().toISOString(),
-      });
-
-      // Acknowledge successful operation
-      if (callback) {
-        callback({
-          success: true,
-          message: "Product added to wishlist successfully",
-        });
-      }
-    } catch (error) {
-      console.error("Error adding to wishlist:", error);
-      if (callback) {
-        callback({
-          success: false,
-          error: error.message,
-        });
-      }
     }
+
+    console.log(
+      `Adding product ${productId} to wishlist for user ${socket.user.id}`
+    );
+    callback && callback({ success: true, message: "Added to wishlist!" });
+
+    socket.emit("wishlistUpdated", productId);
   });
 
-  // Handle disconnection
   socket.on("disconnect", (reason) => {
     console.log(`Client ${socket.id} disconnected. Reason: ${reason}`);
   });
 
-  // Handle errors
   socket.on("error", (error) => {
     console.error(`Socket ${socket.id} error:`, error);
   });
-});
-
-// Error handling for the Socket.IO server
-io.engine.on("connection_error", (err) => {
-  console.error("Connection error:", err);
 });
 
 const PORT = process.env.PORT || 5000;
