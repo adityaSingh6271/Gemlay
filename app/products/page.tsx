@@ -53,12 +53,24 @@ export default function Products() {
     const newSocket = io('http://localhost:5000', { withCredentials: true });
     setSocket(newSocket);
 
-    newSocket.on('cartUpdated', (productId) => {
-      setCart((prev) => [...prev, productId]);
+    // Update cart state when cartUpdated event is received
+    newSocket.on('cartUpdated', (productId: number) => {
+      setCart((prev) => {
+        if (!prev.includes(productId)) {
+          return [...prev, productId]; // Add new product to cart
+        }
+        return prev; // Don't add duplicate items
+      });
     });
 
-    newSocket.on('wishlistUpdated', (productId) => {
-      setWishlist((prev) => [...prev, productId]);
+    // Update wishlist state when wishlistUpdated event is received
+    newSocket.on('wishlistUpdated', (data: { productId: number; userId: string }) => {
+      setWishlist((prev) => {
+        if (!prev.includes(data.productId)) {
+          return [...prev, data.productId]; // Add new product to wishlist
+        }
+        return prev; // Don't add duplicate items
+      });
     });
 
     return () => {
@@ -67,43 +79,34 @@ export default function Products() {
   }, []);
 
   const handleAddToCart = (productId: number) => {
-    socket?.emit(
-      "addToCart",
-      productId,
-      (response: { success: boolean; message: string }) => {
-        if (response?.success) {
-          alert(response.message);
-        } else {
-          alert(response?.message || "An unexpected error occurred.");
-        }
+    socket?.emit('addToCart', productId, (response: { success: boolean; message: string }) => {
+      if (response?.success) {
+        alert(response.message);
+      } else {
+        alert(response?.message || 'An unexpected error occurred.');
       }
-    );
+    });
   };
 
   const handleAddToWishlist = (productId: number) => {
-    socket?.emit(
-      "addToWishlist",
-      productId,
-      (response: { success: boolean; message: string }) => {
-        if (response?.success) {
-          alert(response.message);
-        } else {
-          alert(response?.message || "An unexpected error occurred.");
-        }
+    socket?.emit('addToWishlist', productId, (response: { success: boolean; message: string }) => {
+      if (response?.success) {
+        alert(response.message);
+      } else {
+        alert(response?.message || 'An unexpected error occurred.');
       }
-    );
+    });
   };
 
-  
   return (
     <div className="container mx-auto p-4">
       <h2 className="text-xl font-semibold mb-4">Products</h2>
-  
+
       <div className="mb-4">
         <p>Cart Items: {cart.length}</p>
         <p>Wishlist Items: {wishlist.length}</p>
       </div>
-  
+
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
         {randomProducts.map((product) => (
           <div key={product.id} className="p-4 border rounded shadow">
